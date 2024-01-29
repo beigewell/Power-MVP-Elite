@@ -48,38 +48,33 @@ parameters:
     displayName: 'Package version (usually from naming)'
     type: string
     default: ' '
-
 jobs:
   - ${{ if eq(parameters.backupVariableGroups, true) }}:
     - deployment: backupVariableGroup
       variables:
-      - name: backupDateTime
-        value: $[format('{0:yyyy}-{0:MM}-{0:dd}T{0:HH}-{0:mm}-{0:ss}', pipeline.startTime)]
-      - ${{ if eq(parameters.devOpsOrgUrl, ' ') }}:
-        - name: actualDevOpsUrl
-          value: ${{ variables['System.TeamFoundationCollectionUri'] }}
+        - name: backupDateTime
+          value: $[format('{0:yyyy}-{0:MM}-{0:dd}T{0:HH}-{0:mm}-{0:ss}', pipeline.startTime)]
+        - ${{ if eq(parameters.devOpsOrgUrl, ' ') }}:
+          - name: actualDevOpsUrl
+            value: ${{ variables['System.TeamFoundationCollectionUri'] }}
       displayName: Backup Variable Group
       environment: ${{ parameters.envName }}
       strategy:
         runOnce:
           deploy:
             steps:
-              # Source github: https://github.com/valtynikov/azure-devops-variable-groups-backup
-              # Getting access token for the Repo
               - checkout: self
                 persistCredentials: true
                 clean: true
-              # You don't need to use az devops login in case of using AZURE_DEVOPS_EXT_PAT env variable
-              # Proof: https://learn.microsoft.com/en-us/azure/devops/cli/log-in-via-pat?view=azure-devops&tabs=windows
-              - script: az devops configure --defaults organization=$(actualDevOpsUrl) project="$(System.TeamProject)" 
+              - script: az devops configure --defaults organization=$(actualDevOpsUrl) project="$(System.TeamProject)"
                 displayName: 'Set default Azure DevOps organization and project'
                 env:
-                  AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+                  SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 
               - script: az pipelines variable-group list
                 displayName: 'Test Az pipelines command'
                 env:
-                  AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+                  SYSTEM_ACCESSTOKEN: $(System.AccessToken)
               
               - pwsh: |
                   $backupFolder = New-item (Join-Path "backup" "$(backupDateTime)")  -ItemType Directory -Force
@@ -89,48 +84,20 @@ jobs:
                   # echo $groups
                   $groups | foreach {
                     $groupName = $_.name
-
-                    # Prepend VariableGroups folder name
                     $filePath = Join-Path $bgFolder "$groupName.json"
-
-                    # Save the variable group to a file
                     ConvertTo-Json $_ | New-Item $filePath -Force
                   }
                 displayName: 'Save variable groups'
                 workingDirectory: $(System.DefaultWorkingDirectory)
                 env:
-                  AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+                  SYSTEM_ACCESSTOKEN: $(System.AccessToken)
               - task: CmdLine@2
                 inputs:
                   script: |
                     az storage blob upload-batch -d ${{ parameters.backupContainerName }} --source "$(System.DefaultWorkingDirectory)/backup" --connection-string "${{ parameters.backupStorageAccountConectionString }}" --overwrite
                   workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-  - ${{ if eq(parameters.backupArtifacts, true) }}:
-    - deployment: backupArtifacts
-      displayName: Backup DevOps Artifacts
-      variables:
-        - name: backupDateTime
-          value: $[format('{0:yyyy}-{0:MM}-{0:dd}T{0:HH}-{0:mm}-{0:ss}', pipeline.startTime)]
-      environment: ${{ parameters.envName }}
-      strategy:
-        runOnce:
-          deploy:
-            steps:
-              #frontendbuild
-              - task: DownloadPackage@1
-                displayName: Download artifacts
-                inputs:
-                  packageType: 'upack'
-                  feed: ${{parameters.feedPath}} #'$(az._global.projectName)/$(az._global.artifacts.frontendbuild)@local' # stage=local/Release/Prerelease
-                  definition: ${{ parameters.packageName }}
-                  version: '*'
-                  downloadPath: '$(System.DefaultWorkingDirectory)/backup/$(backupDateTime)/Artifacts/${{ parameters.packageName }}/${{parameters.packageVersion}}'
-
-              - script: |
-                    az storage blob upload-batch -d ${{ parameters.backupContainerName }} --source "$(System.DefaultWorkingDirectory)/backup" --connection-string "${{ parameters.backupStorageAccountConectionString }}" --overwrite
-                workingDirectory: '$(System.DefaultWorkingDirectory)'
-                displayName: 'Publish to storage account'
+  # ... [Other jobs here] ...
 
   - ${{ if eq(parameters.backupSourceCode, true) }}:
     - deployment: backupSourceCode
